@@ -1,0 +1,1 @@
+set PATH=%PATH%;D:\MySoftware\python38;D:\MySoftware\python38\Scripts
