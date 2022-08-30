@@ -1,27 +1,29 @@
 import torch
-import numpy as np
+from torch import nn
+from torch.utils.data import DataLoader
+from torchvision import datasets
+from torchvision.transforms import ToTensor
+import tutorial
 
-data = [[1, 2],[3, 4]]
-x_data = torch.tensor(data)
+model = tutorial.NeuralNetwork()
+model.load_state_dict(torch.load("model.pth"))
 
-np_array = np.array(data)
-x_np = torch.from_numpy(np_array)
+classes = [
+    "T-shirt/top",
+    "Trouser",
+    "Pullover",
+    "Dress",
+    "Coat",
+    "Sandal",
+    "Shirt",
+    "Sneaker",
+    "Bag",
+    "Ankle boot",
+]
 
-x_ones = torch.ones_like(x_data) # retains the properties of x_data
-print(f"Ones Tensor: \n {x_ones} \n")
-
-x_rand = torch.rand_like(x_data, dtype=torch.float) # overrides the datatype of x_data
-print(f"Random Tensor: \n {x_rand} \n")
-
-tensor = torch.rand(3,4)
-
-print(f"Shape of tensor: {tensor.shape}")
-print(f"Datatype of tensor: {tensor.dtype}")
-print(f"Device tensor is stored on: {tensor.device}")
-
-# We move our tensor to the GPU if available
-if torch.cuda.is_available():
-    tensor = tensor.to('cuda')
-    print(f"Shape of tensor: {tensor.shape}")
-    print(f"Datatype of tensor: {tensor.dtype}")
-    print(f"Device tensor is stored on: {tensor.device}")
+model.eval()
+x, y = tutorial.test_data[0][0], tutorial.test_data[0][1]
+with torch.no_grad():
+    pred = model(x)
+    predicted, actual = classes[pred[0].argmax(0)], classes[y]
+    print(f'Predicted: "{predicted}", Actual: "{actual}"')
