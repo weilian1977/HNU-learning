@@ -1,0 +1,3 @@
+[submodule "deeplearning.ai-andrewNG"]
+	path = deeplearning.ai-andrewNG
+	url = https://github.com/robbertliu/deeplearning.ai-andrewNG
