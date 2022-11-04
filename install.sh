@@ -22,7 +22,7 @@ if [ ${cuda_state} -eq 0 ]; then
     pip3 install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
 else
     echo "CUDA 已经安装了，安装pytorch-cu :)"
-    pip3 install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu116
+    pip3 install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu117
 fi
 
 pip install numpy Pillow tensorboard
