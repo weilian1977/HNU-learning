@@ -1,3 +1,6 @@
 [submodule "deeplearning.ai-andrewNG"]
 	path = deeplearning.ai-andrewNG
 	url = https://github.com/robbertliu/deeplearning.ai-andrewNG
+[submodule "yolov5"]
+	path = yolov5
+	url = https://github.com/ultralytics/yolov5
