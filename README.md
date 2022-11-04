@@ -7,3 +7,5 @@
 - 视频教程：https://www.bilibili.com/video/BV1hE411t7RN
 - Darknet: https://github.com/pjreddie/darknet.git Darknet 是 C + CUDA 编程实现的开源神经网络框架. It is fast, easy to install, and supports CPU and GPU computation.
 - Yolo: https://github.com/WongKinYiu/yolov7.git YoloV7 的 pytorch 实现
+
+- 嵌入式Linux平台部署AI神经网络模型Inference的方案: https://www.jianshu.com/p/d4425b65c6e6

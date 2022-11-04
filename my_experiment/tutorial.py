@@ -3,6 +3,11 @@ from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import datasets
 from torchvision.transforms import ToTensor
+from src.logs import my_logger
+
+my_logger.info(f"pytorch version: {torch.__version__}")
+device = "cuda" if torch.cuda.is_available() else "cpu"
+my_logger.info(f"Using {device} device")
 
 # Define model
 class NeuralNetwork(nn.Module):
@@ -94,9 +99,9 @@ if __name__ == '__main__':
     print(model)
 
     loss_fn = nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=1e-3)
+    optimizer = torch.optim.SGD(model.parameters(), lr=1e-3, momentum=0.9)
 
-    epochs = 5
+    epochs = 256
     for t in range(epochs):
         print(f"Epoch {t+1}\n-------------------------------")
         train(train_dataloader, model, loss_fn, optimizer)
@@ -105,3 +110,5 @@ if __name__ == '__main__':
 
     torch.save(model.state_dict(), "model.pth")
     print("Saved PyTorch Model State to model.pth")
+
+# Accuracy: 86.9%, Avg loss: 0.366866 
