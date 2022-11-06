@@ -3,6 +3,8 @@ from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import datasets
 from torchvision.transforms import ToTensor
+import sys
+sys.path.append("../")
 from src.logs import my_logger
 
 my_logger.info(f"pytorch version: {torch.__version__}")
