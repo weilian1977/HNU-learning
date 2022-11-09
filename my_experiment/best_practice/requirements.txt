@@ -1,4 +1,4 @@
-git+https://github.com/pytorch/tnt.git@master
+# git+https://github.com/pytorch/tnt.git@master
 fire
 torchvision
 visdom

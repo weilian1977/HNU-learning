@@ -1,18 +1,21 @@
 #coding:utf8
 from typing import Tuple
 from config import opt
+import time
 import os
 import models
 import torch
+from torch import nn
 from torch.utils.data import DataLoader
 # from torchnet import meter
-from utils.visualize import Visualizer
+# from utils.visualize import Visualizer
 from tqdm import tqdm
 import torchvision
+from threading import Thread
 
+loop = True
 
-def DatasetGet(is_train: bool) -> torch.utils.data.Dataset:
-    datapath = "/home/zhouli/work/HNU-learning/my_experiment/data"
+def DatasetGet(datapath: str, is_train: bool) -> torch.utils.data.Dataset:
     # 定义对数据的预处理
     transform = torchvision.transforms.Compose([
         torchvision.transforms.ToTensor(),  # 转为Tensor
@@ -36,18 +39,19 @@ def DatasetGet(is_train: bool) -> torch.utils.data.Dataset:
     return dataset
 
 
-@t.no_grad()  # pytorch>=0.5
+@torch.no_grad()  # pytorch>=0.5
 def test(**kwargs):
     opt._parse(kwargs)
 
     # configure model
-    model = getattr(models, opt.model)().eval()
+    model: models.BasicModule = getattr(models, opt.model)().eval()
     if opt.load_model_path:
         model.load(opt.load_model_path)
     model.to(opt.device)
+    model.eval()
 
     # data
-    train_data = DogCat(opt.test_data_root, test=True)
+    train_data = DatasetGet(opt.test_data_root, is_train=False)
     test_dataloader = DataLoader(train_data,
                                  batch_size=opt.batch_size,
                                  shuffle=False,
@@ -56,7 +60,7 @@ def test(**kwargs):
     for ii, (data, path) in tqdm(enumerate(test_dataloader)):
         input = data.to(opt.device)
         score = model(input)
-        probability = t.nn.functional.softmax(score,
+        probability = torch.nn.functional.softmax(score,
                                               dim=1)[:, 0].detach().tolist()
         # label = score.max(dim = 1)[1].detach().tolist()
 
@@ -79,30 +83,31 @@ def write_csv(results, file_name):
 
 def train(**kwargs):
     opt._parse(kwargs)
-    vis = Visualizer(opt.env, port=opt.vis_port)
+    # vis = Visualizer(opt.env, port=opt.vis_port)
 
     # step1: configure model
-    model = getattr(models, opt.model)()
+    model: nn.Module = getattr(models, opt.model)()
     if opt.load_model_path:
         model.load(opt.load_model_path)
     model.to(opt.device)
+    model.train()
 
     # step2: data
-    train_data = DogCat(opt.train_data_root, train=True)
-    val_data = DogCat(opt.train_data_root, train=False)
+    train_data = DatasetGet(opt.train_data_root, is_train=True)
+    # val_data = DatasetGet(opt.train_data_root, train=False)
     train_dataloader = DataLoader(train_data,
                                   opt.batch_size,
                                   shuffle=True,
                                   num_workers=opt.num_workers)
-    val_dataloader = DataLoader(val_data,
-                                opt.batch_size,
-                                shuffle=False,
-                                num_workers=opt.num_workers)
+    # val_dataloader = DataLoader(val_data,
+    #                             opt.batch_size,
+    #                             shuffle=False,
+    #                             num_workers=opt.num_workers)
 
     # step3: criterion and optimizer
     criterion = torch.nn.CrossEntropyLoss()
-    lr = opt.lr
-    optimizer = model.get_optimizer(lr, opt.weight_decay)
+    lr: float = opt.lr
+    optimizer: torch.optim.Optimizer = model.get_optimizer(lr, opt.weight_decay)
 
     # step4: meters
     # loss_meter = meter.AverageValueMeter()
@@ -132,20 +137,20 @@ def train(**kwargs):
             # detach 一下更安全保险
             # confusion_matrix.add(score.detach(), target.detach())
 
-            if (ii + 1) % opt.print_freq == 0:
-                vis.plot('loss', loss.item())
+            # if (ii + 1) % opt.print_freq == 0:
+            #     vis.plot('loss', loss.item())
 
-                # 进入debug模式
-                if os.path.exists(opt.debug_file):
-                    import ipdb
-                    ipdb.set_trace()
+            #     # 进入debug模式
+            #     if os.path.exists(opt.debug_file):
+            #         import ipdb
+            #         ipdb.set_trace()
 
         model.save()
 
         # validate and visualize
-        val_cm, val_accuracy = val(model, val_dataloader)
+        # val_cm, val_accuracy = val(model, val_dataloader)
 
-        vis.plot('val_accuracy', val_accuracy)
+        # vis.plot('val_accuracy', val_accuracy)
         # vis.log("epoch:{epoch},lr:{lr},loss:{loss},train_cm:{train_cm},val_cm:{val_cm}".format(
         #             epoch = epoch,loss = loss_meter.value()[0],val_cm = str(val_cm.value()),train_cm=str(confusion_matrix.value()),lr=lr))
 
@@ -179,5 +184,21 @@ def help():
 
 
 if __name__ == '__main__':
-    import fire
-    fire.Fire()
+
+    def noInterrupt():
+        while loop:
+            import fire
+            fire.Fire()
+
+    th = Thread(target=noInterrupt, name="work-thread")
+    th.start()
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        loop = False
+
+    print("Wait for thread exit")
+    th.join()
+    print("End...")
+    
