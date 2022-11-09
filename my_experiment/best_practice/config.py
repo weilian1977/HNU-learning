@@ -11,8 +11,9 @@ class DefaultConfig(object):
     test_data_root = '../data'  # 测试集存放路径
     load_model_path = None  # 加载预训练的模型的路径，为None代表不加载
 
-    batch_size = 32  # batch size
+    batch_size = 64  # batch size
     use_gpu = True  # user GPU or not
+    device = "cpu"
     num_workers = 2  # how many workers for loading data
     print_freq = 20  # print info every N batch
 
@@ -36,11 +37,10 @@ class DefaultConfig(object):
         
         opt.device = "cuda" if t.cuda.is_available() and opt.use_gpu else "cpu"
 
-
         print('--------user config:')
         for k, v in self.__class__.__dict__.items():
             if not k.startswith('_'):
-                print(f"{k}: \t\t{getattr(self, k)}")
+                print("%-20s: %-20s" %(k, getattr(self, k)))
         print('--------------------')
 
 opt = DefaultConfig()
