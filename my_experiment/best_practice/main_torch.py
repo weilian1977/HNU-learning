@@ -23,7 +23,7 @@ import torchvision.transforms as transforms
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import Subset
 
-from utils import PlotMonitor
+from utils import PlotMonitor, logger
 
 model_names: list = sorted(name for name in models.__dict__
                            if name.islower() and not name.startswith("__")
@@ -184,11 +184,11 @@ def main_worker(gpu, ngpus_per_node, args):
     global best_acc1
     args.gpu = gpu
 
-    print('--------user config:')
+    logger('--------user config:')
     for k, v in args.__dict__.items():
         if not k.startswith('_'):
-            print("%-30s: %-20s" % (k, getattr(args, k)))
-    print('--------------------')
+            logger("%-30s: %-20s" % (k, getattr(args, k)))
+    logger('--------------------')
 
     import platform
     s = f'🚀 Python-{platform.python_version()} torch-{torch.__version__} '
@@ -196,10 +196,10 @@ def main_worker(gpu, ngpus_per_node, args):
     for i, d in enumerate("0"):
             p = torch.cuda.get_device_properties(i)
             s += f"{'' if i == 0 else space}CUDA:{d} ({p.name}, {p.total_memory / (1 << 20):.0f}MiB)\n"  # bytes to MB
-    print(s)
+    logger(s)
 
     if args.gpu is not None:
-        print("Use GPU: {} for training".format(args.gpu))
+        logger("Use GPU: {} for training".format(args.gpu))
 
     if args.distributed:
         if args.dist_url == "env://" and args.rank == -1:
@@ -215,14 +215,14 @@ def main_worker(gpu, ngpus_per_node, args):
     # create model
     model: nn.Module
     if args.pretrained:
-        print("=> using pre-trained model '{}'".format(args.arch))
+        logger("=> using pre-trained model '{}'".format(args.arch))
         model = models.__dict__[args.arch](pretrained=True)
     else:
-        print("=> creating model '{}'".format(args.arch))
+        logger("=> creating model '{}'".format(args.arch))
         model = models.__dict__[args.arch](num_classes=43)
 
     if not torch.cuda.is_available() and not torch.backends.mps.is_available():
-        print('using CPU, this will be slow')
+        logger('using CPU, this will be slow')
     elif args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
         # should always set the single device scope, otherwise,
@@ -280,7 +280,7 @@ def main_worker(gpu, ngpus_per_node, args):
     # optionally resume from a checkpoint
     if args.resume:
         if os.path.isfile(args.resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
+            logger("=> loading checkpoint '{}'".format(args.resume))
             if args.gpu is None:
                 checkpoint = torch.load(args.resume)
             elif torch.cuda.is_available():
@@ -295,14 +295,14 @@ def main_worker(gpu, ngpus_per_node, args):
             model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
             scheduler.load_state_dict(checkpoint['scheduler'])
-            print("=> loaded checkpoint '{}' (epoch {})".format(
+            logger("=> loaded checkpoint '{}' (epoch {})".format(
                 args.resume, checkpoint['epoch']))
         else:
-            print("=> no checkpoint found at '{}'".format(args.resume))
+            logger("=> no checkpoint found at '{}'".format(args.resume))
 
     # Data loading code
     if args.dummy:
-        print("=> Dummy data is used!")
+        logger("=> Dummy data is used!")
         train_dataset = datasets.FakeData(1281167, (3, 224, 224), 1000,
                                           transforms.ToTensor())
         val_dataset = datasets.FakeData(50000, (3, 224, 224), 1000,
@@ -331,7 +331,7 @@ def main_worker(gpu, ngpus_per_node, args):
                 normalize,
             ]))
         for i in train_dataset.classes:
-            print(f"class:{i}-id:{train_dataset.class_to_idx[i]}")
+            logger(f"class:{i}-id:{train_dataset.class_to_idx[i]}")
         # import torchvision
         # train_dataset = torchvision.datasets.CIFAR10(root="../../data",
         #                                        train=True,
@@ -455,7 +455,7 @@ def train(train_loader, model, criterion, optimizer, epoch, device, args,
         loss = criterion(output, target)
 
         # measure accuracy and record loss
-        # print(f"output size-{output.size()}, target size-{target.size()}")
+        # logger(f"output size-{output.size()}, target size-{target.size()}")
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
         losses.update(loss.item(), images.size(0))
         top1.update(acc1[0], images.size(0))
@@ -624,12 +624,12 @@ class ProgressMeter(object):
     def display(self, batch):
         entries = [self.prefix + self.batch_fmtstr.format(batch)]
         entries += [str(meter) for meter in self.meters]
-        print('\t'.join(entries))
+        logger('\t'.join(entries))
 
     def display_summary(self):
         entries = [" *"]
         entries += [meter.summary() for meter in self.meters]
-        print(' '.join(entries))
+        logger.warning(' '.join(entries))
 
     def _get_batch_fmtstr(self, num_batches):
         num_digits = len(str(num_batches // 1))
