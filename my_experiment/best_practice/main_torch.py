@@ -190,6 +190,14 @@ def main_worker(gpu, ngpus_per_node, args):
             print("%-30s: %-20s" % (k, getattr(args, k)))
     print('--------------------')
 
+    import platform
+    s = f'🚀 Python-{platform.python_version()} torch-{torch.__version__} '
+    space = ' ' * (len(s) + 1)
+    for i, d in enumerate("0"):
+            p = torch.cuda.get_device_properties(i)
+            s += f"{'' if i == 0 else space}CUDA:{d} ({p.name}, {p.total_memory / (1 << 20):.0f}MiB)\n"  # bytes to MB
+    print(s)
+
     if args.gpu is not None:
         print("Use GPU: {} for training".format(args.gpu))
 
