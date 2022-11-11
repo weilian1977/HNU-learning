@@ -1,1 +1,2 @@
-from .visualize import Visualizer
+# from .visualize import Visualizer
+from .monitor import PlotMonitor
