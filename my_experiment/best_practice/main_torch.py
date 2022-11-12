@@ -4,7 +4,7 @@ import random
 import shutil
 import sys
 import time
-from typing import Callable
+from typing import Callable, Tuple
 import warnings
 from enum import Enum
 
@@ -194,8 +194,8 @@ def main_worker(gpu, ngpus_per_node, args):
     s = f'🚀 Python-{platform.python_version()} torch-{torch.__version__} '
     space = ' ' * (len(s) + 1)
     for i, d in enumerate("0"):
-            p = torch.cuda.get_device_properties(i)
-            s += f"{'' if i == 0 else space}CUDA:{d} ({p.name}, {p.total_memory / (1 << 20):.0f}MiB)\n"  # bytes to MB
+        p = torch.cuda.get_device_properties(i)
+        s += f"{'' if i == 0 else space}CUDA:{d} ({p.name}, {p.total_memory / (1 << 20):.0f}MiB)\n"  # bytes to MB
     logger(s)
 
     if args.gpu is not None:
@@ -212,6 +212,9 @@ def main_worker(gpu, ngpus_per_node, args):
                                 init_method=args.dist_url,
                                 world_size=args.world_size,
                                 rank=args.rank)
+    # load dataset
+    train_dataset, val_dataset, class_num = get_dataset(args)
+
     # create model
     model: nn.Module
     if args.pretrained:
@@ -219,7 +222,7 @@ def main_worker(gpu, ngpus_per_node, args):
         model = models.__dict__[args.arch](pretrained=True)
     else:
         logger("=> creating model '{}'".format(args.arch))
-        model = models.__dict__[args.arch](num_classes=43)
+        model = models.__dict__[args.arch](num_classes=class_num)
 
     if not torch.cuda.is_available() and not torch.backends.mps.is_available():
         logger('using CPU, this will be slow')
@@ -301,57 +304,6 @@ def main_worker(gpu, ngpus_per_node, args):
             logger("=> no checkpoint found at '{}'".format(args.resume))
 
     # Data loading code
-    if args.dummy:
-        logger("=> Dummy data is used!")
-        train_dataset = datasets.FakeData(1281167, (3, 224, 224), 1000,
-                                          transforms.ToTensor())
-        val_dataset = datasets.FakeData(50000, (3, 224, 224), 1000,
-                                        transforms.ToTensor())
-    else:
-        traindir = os.path.join(args.data, 'train')
-        valdir = os.path.join(args.data, 'valid')
-        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                         std=[0.229, 0.224, 0.225])
-
-        train_dataset = datasets.ImageFolder(
-            traindir,
-            transforms.Compose([
-                transforms.RandomResizedCrop(224),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                normalize,
-            ]))
-
-        val_dataset = datasets.ImageFolder(
-            valdir,
-            transforms.Compose([
-                transforms.Resize(256),
-                transforms.CenterCrop(224),
-                transforms.ToTensor(),
-                normalize,
-            ]))
-        for i in train_dataset.classes:
-            logger(f"class:{i}-id:{train_dataset.class_to_idx[i]}")
-        # import torchvision
-        # train_dataset = torchvision.datasets.CIFAR10(root="../../data",
-        #                                        train=True,
-        #                                        download=True,
-        #                                        transform=transforms.Compose([
-        #                                         transforms.RandomResizedCrop(222),
-        #                                         transforms.RandomHorizontalFlip(),
-        #                                         transforms.ToTensor(),
-        #                                         normalize,
-        #                                     ]))
-        # val_dataset = torchvision.datasets.CIFAR10(root="../../data",
-        #                                        train=False,
-        #                                        download=True,
-        #                                        transform=transforms.Compose([
-        #                                         transforms.Resize(256),
-        #                                         transforms.CenterCrop(224),
-        #                                         transforms.ToTensor(),
-        #                                         normalize,
-        #                                     ]))
-
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(
             train_dataset)
@@ -375,7 +327,8 @@ def main_worker(gpu, ngpus_per_node, args):
                                              pin_memory=True,
                                              sampler=val_sampler)
 
-    monitors:dict[str, PlotMonitor] = {}
+    monitors: dict[str, PlotMonitor] = {}
+
     def plot_hook(f, p):
         if f not in monitors.keys():
             monitors[f] = PlotMonitor("pic.log")
@@ -419,12 +372,15 @@ def main_worker(gpu, ngpus_per_node, args):
             save_checkpoint(
                 {
                     'epoch': epoch + 1,
-                    'arch': args.arch,
+                    'args': args,
+                    "class_num": model.num_classes,
                     'state_dict': model.state_dict(),
                     'best_acc1': best_acc1,
                     'optimizer': optimizer.state_dict(),
                     'scheduler': scheduler.state_dict()
-                }, is_best)
+                }, is_best, f"{args.arch}_{best_acc1:.2f}_checkpoint.pth")
+            save_checkpoint(model, is_best,
+                            f"model_{args.arch}_{best_acc1:.2f}_checkpoint.pth")
 
 
 def train(train_loader, model, criterion, optimizer, epoch, device, args,
@@ -546,10 +502,70 @@ def validate(val_loader, model, criterion, args, display_hook: Callable):
     return top1.avg
 
 
-def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
+def get_dataset(
+        args
+) -> Tuple[torch.utils.data.Dataset, torch.utils.data.Dataset, int]:
+    if args.dummy:
+        logger("=> Dummy data is used!")
+        train_dataset = datasets.FakeData(1281167, (3, 224, 224), 1000,
+                                          transforms.ToTensor())
+        val_dataset = datasets.FakeData(50000, (3, 224, 224), 1000,
+                                        transforms.ToTensor())
+    else:
+        traindir = os.path.join(args.data, 'train')
+        valdir = os.path.join(args.data, 'valid')
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                         std=[0.229, 0.224, 0.225])
+
+        train_dataset = datasets.ImageFolder(
+            traindir,
+            transforms.Compose([
+                transforms.RandomResizedCrop(224),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize,
+            ]))
+
+        val_dataset = datasets.ImageFolder(
+            valdir,
+            transforms.Compose([
+                transforms.Resize(256),
+                transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                normalize,
+            ]))
+
+        class_num: int = 0
+        for c in train_dataset.classes:
+            class_num += 1
+            logger(f"class:\"{c}\" - id:{train_dataset.class_to_idx[c]}")
+        logger(f"total class number: {class_num}")
+        # import torchvision
+        # train_dataset = torchvision.datasets.CIFAR10(root="../../data",
+        #                                        train=True,
+        #                                        download=True,
+        #                                        transform=transforms.Compose([
+        #                                         transforms.RandomResizedCrop(222),
+        #                                         transforms.RandomHorizontalFlip(),
+        #                                         transforms.ToTensor(),
+        #                                         normalize,
+        #                                     ]))
+        # val_dataset = torchvision.datasets.CIFAR10(root="../../data",
+        #                                        train=False,
+        #                                        download=True,
+        #                                        transform=transforms.Compose([
+        #                                         transforms.Resize(256),
+        #                                         transforms.CenterCrop(224),
+        #                                         transforms.ToTensor(),
+        #                                         normalize,
+        #                                     ]))
+        return (train_dataset, val_dataset, class_num)
+
+
+def save_checkpoint(state, is_best, filename='checkpoint.pth'):
     torch.save(state, filename)
     if is_best:
-        shutil.copyfile(filename, 'model_best.pth.tar')
+        shutil.copyfile(filename, "best_" + filename)
 
 
 class Summary(Enum):

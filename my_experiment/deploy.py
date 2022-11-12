@@ -1,3 +1,4 @@
+import argparse
 import cv2
 import numpy as np
 import os
@@ -6,42 +7,58 @@ import torch.nn as nn
 import torchvision.models as models
 import torchvision.transforms as transforms
 
-gpu = None
-pth_path = "best_practice/model_best.pth.tar"
-arch = None
-
 
 def main():
-    model: nn.Module = load_model(pth_path)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('pth_file', nargs='?', type=str, default='checkpoint.pth', help='model path')
+    parser.add_argument('-s', '--source', type=str, default='data/images', help='file/dir/0(webcam)')
+    parser.add_argument('--gpu', default=None, type=int, help='GPU id to use. default use cpu')
+    opt = parser.parse_args()
+    
+    model: nn.Module = load_model(opt.pth_file, opt)
     model.eval()
-    img_path = "/home/zhouli/work/data/valid/Other_garbage-soiled_plastic"
-    for i in os.listdir(img_path):
-        if os.path.isfile(os.path.join(img_path, i)):
-            image = cv2.imread(os.path.join(img_path, i), flags=1)
-            label, y = test(model, image)
-            print(f"{i}: [{os.path.basename(img_path)} <--> {label}] ({y})")
+    source = str(opt.source)
+    is_file = os.path.splitext(source)[1] in (".jpg", ".png")
+    webcam = source.isnumeric() and not is_file
+
+    if is_file:
+        image = cv2.imread(source, flags=1)
+        label, y = test(model, image)
+        print(f"{source}: [{os.path.basename(source)} <--> {label}] ({y})")
+    elif webcam:
+        stream_processing(model, test)
+    else:
+        for i in os.listdir(source):
+            if os.path.isfile(os.path.join(source, i)):
+                image = cv2.imread(os.path.join(source, i), flags=1)
+                label, y = test(model, image)
+                print(f"{i}: [{os.path.basename(source)} <--> {label}] ({y})")
 
 
-def load_model(pth_path: str, loc="cpu") -> nn.Module:
+def load_model(pth_path: str, opt, loc="cpu") -> nn.Module:
     print("=> loading checkpoint '{}'".format(pth_path))
-    if gpu is None:
+    if opt.gpu is None:
         checkpoint = torch.load(pth_path, map_location=loc)
     elif torch.cuda.is_available():
-        # Map model to be loaded to specified single gpu.
-        loc = 'cuda:{}'.format(gpu)
+        # Map model to be loaded to specified single opt..
+        loc = 'cuda:{}'.format(opt.gpu)
         checkpoint = torch.load(pth_path, map_location=loc)
 
-    arch = checkpoint["arch"]
-    print("=> creating model '{}'".format(arch))
-    model: nn.Module = models.__dict__[checkpoint["arch"]](num_classes=43)
-    model = torch.nn.DataParallel(model).cuda()
-    print("=> loaded checkpoint '{}' (epoch {})".format(
-        pth_path, checkpoint['epoch']))
-    model.load_state_dict(checkpoint['state_dict'])
+    try:
+        args = checkpoint["args"]
+        print("=> creating model '{}'".format(args.arch))
+        model: nn.Module = models.__dict__[args.arch](num_classes=checkpoint["num_classes"])
+        model = torch.nn.DataParallel(model).cuda()
+        print("=> loaded checkpoint '{}' (epoch {})".format(
+            pth_path, checkpoint['epoch']))
+        model.load_state_dict(checkpoint['state_dict'])
+    except:
+        print("direct load whole model")
+        model=torch.load(pth_path)
     return model
 
 
-def stream_processing(test_cb):
+def stream_processing(model, test_cb):
     import time
     # fcap = cv2.VideoCapture('demo.mp4')
     fcap = cv2.VideoCapture(0)
@@ -59,7 +76,7 @@ def stream_processing(test_cb):
     while fcap.isOpened():
         success, frame = fcap.read()
         while success:
-            label, y = test_cb(frame)
+            label, y = test_cb(model, frame)
             interval = time.time() - last_time
             last_time = time.time()
             cv2.putText(
@@ -101,8 +118,6 @@ def test(model: nn.Module, image) -> list:
     # cv2.destroyAllWindows()
     return pred_label, y[0][pred_label]
 
-
-# stream_processing(test)
 
 if __name__ == "__main__":
     main()
