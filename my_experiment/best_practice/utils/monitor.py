@@ -11,7 +11,7 @@ class _Monitor(object):
     def __init__(self, path) -> None:
         self.time_str: str = time.strftime("%Y-%m-%d-%H:%M:%S",
                                            time.localtime())
-        self.path: str = os.path.join(path, self.time_str)
+        self.path: str = path
         if not os.path.exists(self.path):
             os.mkdir(self.path)
 

@@ -1,4 +1,6 @@
 import argparse
+from copy import deepcopy
+import datetime
 import os
 import random
 import shutil
@@ -7,6 +9,7 @@ import time
 from typing import Callable, Tuple
 import warnings
 from enum import Enum
+from pathlib import Path
 
 import torch
 import torch.backends.cudnn as cudnn
@@ -23,7 +26,7 @@ import torchvision.transforms as transforms
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import Subset
 
-from utils import PlotMonitor, logger
+from utils import PlotMonitor, increment_path, logger
 
 model_names: list = sorted(name for name in models.__dict__
                            if name.islower() and not name.startswith("__")
@@ -135,6 +138,10 @@ parser.add_argument('--multiprocessing-distributed',
 parser.add_argument('--dummy',
                     action='store_true',
                     help="use fake data to benchmark")
+parser.add_argument('--artifact-path',
+                    default='run.log/artifacts',
+                    type=str,
+                    help='artifacts save to here')
 
 best_acc1 = 0
 
@@ -183,6 +190,12 @@ def main():
 def main_worker(gpu, ngpus_per_node, args):
     global best_acc1
     args.gpu = gpu
+    artifact_path = Path(args.artifact_path).resolve()
+    artifact_path = increment_path(artifact_path, exist_ok=False)
+    artifact_path.mkdir(parents=True, exist_ok=True)  # make dir
+    args.artifact_path = artifact_path
+
+    logger.set_file_dir(str(artifact_path))
 
     logger('--------user config:')
     for k, v in args.__dict__.items():
@@ -200,6 +213,16 @@ def main_worker(gpu, ngpus_per_node, args):
 
     if args.gpu is not None:
         logger("Use GPU: {} for training".format(args.gpu))
+
+    if torch.cuda.is_available():
+        if args.gpu:
+            device = torch.device('cuda:{}'.format(args.gpu))
+        else:
+            device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
 
     if args.distributed:
         if args.dist_url == "env://" and args.rank == -1:
@@ -224,6 +247,30 @@ def main_worker(gpu, ngpus_per_node, args):
         logger("=> creating model '{}'".format(args.arch))
         model = models.__dict__[args.arch](num_classes=class_num)
 
+    # optionally resume from a checkpoint
+    if args.resume:
+        if os.path.isfile(args.resume):
+            logger("=> loading checkpoint '{}'".format(args.resume))
+            if args.gpu is None:
+                checkpoint = torch.load(args.resume)
+            elif torch.cuda.is_available():
+                # Map model to be loaded to specified single gpu.
+                loc = 'cuda:{}'.format(args.gpu)
+                checkpoint = torch.load(args.resume, map_location=loc)
+            args.start_epoch = checkpoint['epoch']
+            best_acc1 = checkpoint['best_acc1']
+            if args.gpu is not None:
+                # best_acc1 may be from a checkpoint from a different GPU
+                best_acc1 = best_acc1.to(args.gpu)
+
+            # load model, checkpoint state_dict as FP32
+            model.load_state_dict(checkpoint['model'].float().state_dict())
+            logger("=> loaded checkpoint '{}' (epoch {})".format(
+                args.resume, checkpoint['epoch']))
+        else:
+            logger("=> no checkpoint found at '{}'".format(args.resume))
+
+    # set model to appropriate device
     if not torch.cuda.is_available() and not torch.backends.mps.is_available():
         logger('using CPU, this will be slow')
     elif args.distributed:
@@ -261,47 +308,17 @@ def main_worker(gpu, ngpus_per_node, args):
         else:
             model = torch.nn.DataParallel(model).cuda()
 
-    if torch.cuda.is_available():
-        if args.gpu:
-            device = torch.device('cuda:{}'.format(args.gpu))
-        else:
-            device = torch.device("cuda")
-    elif torch.backends.mps.is_available():
-        device = torch.device("mps")
-    else:
-        device = torch.device("cpu")
     # define loss function (criterion), optimizer, and learning rate scheduler
     criterion = nn.CrossEntropyLoss().to(device)
-
     optimizer = torch.optim.SGD(model.parameters(),
                                 args.lr,
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
     """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
     scheduler = StepLR(optimizer, step_size=30, gamma=0.1)
-
-    # optionally resume from a checkpoint
     if args.resume:
-        if os.path.isfile(args.resume):
-            logger("=> loading checkpoint '{}'".format(args.resume))
-            if args.gpu is None:
-                checkpoint = torch.load(args.resume)
-            elif torch.cuda.is_available():
-                # Map model to be loaded to specified single gpu.
-                loc = 'cuda:{}'.format(args.gpu)
-                checkpoint = torch.load(args.resume, map_location=loc)
-            args.start_epoch = checkpoint['epoch']
-            best_acc1 = checkpoint['best_acc1']
-            if args.gpu is not None:
-                # best_acc1 may be from a checkpoint from a different GPU
-                best_acc1 = best_acc1.to(args.gpu)
-            model.load_state_dict(checkpoint['state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            scheduler.load_state_dict(checkpoint['scheduler'])
-            logger("=> loaded checkpoint '{}' (epoch {})".format(
-                args.resume, checkpoint['epoch']))
-        else:
-            logger("=> no checkpoint found at '{}'".format(args.resume))
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        scheduler.load_state_dict(checkpoint['scheduler'])
 
     # Data loading code
     if args.distributed:
@@ -331,7 +348,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
     def plot_hook(f, p):
         if f not in monitors.keys():
-            monitors[f] = PlotMonitor("pic.log")
+            monitors[f] = PlotMonitor(str(artifact_path))
         mon = monitors[f]
         for m in p.meters:
             if False == mon.check_line_existence(m.name):
@@ -369,18 +386,21 @@ def main_worker(gpu, ngpus_per_node, args):
         if not args.multiprocessing_distributed or (
                 args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0):
+            # Save model
+            ckpt = {
+                'epoch': epoch + 1,
+                'best_acc1': best_acc1,
+                'model': deepcopy(de_parallel(model)).half(),
+                'optimizer': optimizer.state_dict(),
+                'scheduler': scheduler.state_dict(),
+                'opt': vars(args),
+                'date': time.strftime("%Y-%m-%d-%H:%M:%S", time.localtime())
+            }
+
             save_checkpoint(
-                {
-                    'epoch': epoch + 1,
-                    'args': args,
-                    "class_num": model.num_classes,
-                    'state_dict': model.state_dict(),
-                    'best_acc1': best_acc1,
-                    'optimizer': optimizer.state_dict(),
-                    'scheduler': scheduler.state_dict()
-                }, is_best, f"{args.arch}_{best_acc1:.2f}_checkpoint.pth")
-            save_checkpoint(model, is_best,
-                            f"model_{args.arch}_{best_acc1:.2f}_checkpoint.pth")
+                ckpt, is_best,
+                str(args.artifact_path / f"{args.arch}_checkpoint.pth"))
+            del ckpt
 
 
 def train(train_loader, model, criterion, optimizer, epoch, device, args,
@@ -562,10 +582,23 @@ def get_dataset(
         return (train_dataset, val_dataset, class_num)
 
 
-def save_checkpoint(state, is_best, filename='checkpoint.pth'):
+def is_parallel(model):
+    # Returns True if model is of type DP or DDP
+    return type(model) in (nn.parallel.DataParallel,
+                           nn.parallel.DistributedDataParallel)
+
+
+def de_parallel(model):
+    # De-parallelize a model: returns single-GPU model if model is of type DP or DDP
+    return model.module if is_parallel(model) else model
+
+
+def save_checkpoint(state, is_best: bool, filename: str = 'checkpoint.pth'):
+    assert filename.endswith('.pth')
     torch.save(state, filename)
     if is_best:
-        shutil.copyfile(filename, "best_" + filename)
+        new_name = filename[:-4] + "_best" + filename[-4:]
+        shutil.copyfile(filename, new_name)
 
 
 class Summary(Enum):
