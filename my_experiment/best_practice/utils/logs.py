@@ -61,7 +61,7 @@ class MyLog():
         if log_file_dir:
             log_file_dir = ospath.join(
                 log_file_dir, "%s.log" %
-                time.strftime("%Y-%m-%d-%H:%M:%S", time.localtime()))
+                time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime()))
             self._fh1 = logging.FileHandler(filename=log_file_dir, mode='w')
             self._fh1.setFormatter(_CustomFormatter(
                 self._fmt,

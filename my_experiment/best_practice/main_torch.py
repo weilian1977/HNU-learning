@@ -555,11 +555,6 @@ def get_dataset(
                 normalize,
             ]))
 
-        class_num: int = 0
-        for c in train_dataset.classes:
-            class_num += 1
-            logger(f"class:\"{c}\" - id:{train_dataset.class_to_idx[c]}")
-        logger(f"total class number: {class_num}")
         # import torchvision
         # train_dataset = torchvision.datasets.CIFAR10(root="../../data",
         #                                        train=True,
@@ -579,7 +574,15 @@ def get_dataset(
         #                                         transforms.ToTensor(),
         #                                         normalize,
         #                                     ]))
-        return (train_dataset, val_dataset, class_num)
+    class_num: int = 0
+    try:
+        for c in train_dataset.classes:
+            class_num += 1
+            logger(f"class:\"{c}\" - id:{train_dataset.class_to_idx[c]}")
+        logger(f"total class number: {class_num}")
+    except AttributeError: #'FakeData' object has no attribute 'classes'
+        pass
+    return (train_dataset, val_dataset, class_num)
 
 
 def is_parallel(model):
