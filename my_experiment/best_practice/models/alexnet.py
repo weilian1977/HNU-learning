@@ -1,4 +1,5 @@
 # coding:utf8
+from typing import Any
 from torch import nn
 from .basic_module import BasicModule
 
@@ -9,7 +10,7 @@ class AlexNet(BasicModule):
     结构参考 <https://arxiv.org/abs/1404.5997>
     """
 
-    def __init__(self, num_classes=2):
+    def __init__(self, num_classes):
         super(AlexNet, self).__init__()
 
         self.model_name = 'alexnet'
@@ -44,3 +45,34 @@ class AlexNet(BasicModule):
         x = x.view(x.size(0), 256 * 6 * 6)
         x = self.classifier(x)
         return x
+
+def my_alexnet(*_, **kwargs: Any) -> AlexNet:
+    """AlexNet model architecture from `One weird trick for parallelizing convolutional neural networks <https://arxiv.org/abs/1404.5997>`__.
+
+    .. note::
+        AlexNet was originally introduced in the `ImageNet Classification with
+        Deep Convolutional Neural Networks
+        <https://papers.nips.cc/paper/2012/hash/c399862d3b9d6b76c8436e924a68c45b-Abstract.html>`__
+        paper. Our implementation is based instead on the "One weird trick"
+        paper above.
+
+    Args:
+        weights (:class:`~torchvision.models.AlexNet_Weights`, optional): The
+            pretrained weights to use. See
+            :class:`~torchvision.models.AlexNet_Weights` below for
+            more details, and possible values. By default, no pre-trained
+            weights are used.
+        progress (bool, optional): If True, displays a progress bar of the
+            download to stderr. Default is True.
+        **kwargs: parameters passed to the ``torchvision.models.squeezenet.AlexNet``
+            base class. Please refer to the `source code
+            <https://github.com/pytorch/vision/blob/main/torchvision/models/alexnet.py>`_
+            for more details about this class.
+
+    .. autoclass:: torchvision.models.AlexNet_Weights
+        :members:
+    """
+
+    model = AlexNet(**kwargs)
+
+    return model

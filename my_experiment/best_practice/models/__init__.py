@@ -1,5 +1,5 @@
-from .alexnet import AlexNet
-from .resnet34 import ResNet34
+from .alexnet import *
+from .resnet34 import *
 from .squeezenet import SqueezeNet
 from .lenet import LeNet
 from .basic_module import BasicModule

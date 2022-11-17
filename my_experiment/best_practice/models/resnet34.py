@@ -1,4 +1,5 @@
 # coding:utf8
+from typing import Any
 from .basic_module import BasicModule
 from torch import nn
 from torch.nn import functional as F
@@ -12,10 +13,10 @@ class ResidualBlock(nn.Module):
     def __init__(self, inchannel, outchannel, stride=1, shortcut=None):
         super(ResidualBlock, self).__init__()
         self.left = nn.Sequential(
-            nn.Conv2d(inchannel, outchannel, 3, stride, 1, bias=False),
+            nn.Conv2d(inchannel, outchannel, kernel_size=3, stride=stride, padding=1, bias=False),
             nn.BatchNorm2d(outchannel),
             nn.ReLU(inplace=True),
-            nn.Conv2d(outchannel, outchannel, 3, 1, 1, bias=False),
+            nn.Conv2d(outchannel, outchannel, kernel_size=3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(outchannel))
         self.right = shortcut
 
@@ -33,7 +34,7 @@ class ResNet34(BasicModule):
     用子module来实现Residual block，用_make_layer函数来实现layer
     """
 
-    def __init__(self, num_classes=2):
+    def __init__(self, num_classes):
         super(ResNet34, self).__init__()
         self.model_name = 'resnet34'
 
@@ -79,3 +80,9 @@ class ResNet34(BasicModule):
         x = F.avg_pool2d(x, 7)
         x = x.view(x.size(0), -1)
         return self.fc(x)
+
+def my_resnet34(*_, **kwargs: Any) -> ResNet34:
+
+    model = ResNet34(**kwargs)
+
+    return model
