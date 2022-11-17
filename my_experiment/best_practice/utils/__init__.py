@@ -1,6 +1,6 @@
 # from .visualize import Visualizer
-from .monitor import PlotMonitor
-from .logs import MyLog
+from .monitor import *
+from .logs import *
 from pathlib import Path
 import os
 

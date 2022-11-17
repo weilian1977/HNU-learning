@@ -1,6 +1,8 @@
+#!/usr/bin/env python
+
 import argparse
 from copy import deepcopy
-import datetime
+from tqdm import tqdm
 import os
 import random
 import shutil
@@ -10,6 +12,7 @@ from typing import Callable, Tuple
 import warnings
 from enum import Enum
 from pathlib import Path
+import numpy as np
 
 import torch
 import torch.backends.cudnn as cudnn
@@ -21,16 +24,20 @@ import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.datasets as datasets
-import torchvision.models as models
+import models
 import torchvision.transforms as transforms
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import Subset
+import torchvision.models as t_models
 
-from utils import PlotMonitor, increment_path, logger
+from utils import PlotMonitor, increment_path, logger, TqdmToLogger, ConfusionMatrix
 
 model_names: list = sorted(name for name in models.__dict__
                            if name.islower() and not name.startswith("__")
                            and callable(models.__dict__[name]))
+model_names += sorted(name for name in t_models.__dict__
+                           if name.islower() and not name.startswith("__")
+                           and callable(t_models.__dict__[name]))
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('data',
@@ -236,7 +243,9 @@ def main_worker(gpu, ngpus_per_node, args):
                                 world_size=args.world_size,
                                 rank=args.rank)
     # load dataset
-    train_dataset, val_dataset, class_num = get_dataset(args)
+    train_dataset, val_dataset, class_num, class_list = get_dataset(args)
+    args.class_num = class_num
+    args.class_list = class_list
 
     # create model
     model: nn.Module
@@ -245,8 +254,10 @@ def main_worker(gpu, ngpus_per_node, args):
         model = models.__dict__[args.arch](pretrained=True)
     else:
         logger("=> creating model '{}'".format(args.arch))
-        model = models.__dict__[args.arch](num_classes=class_num)
-
+        if args.arch.startswith("my_"):
+            model = models.__dict__[args.arch](num_classes=args.class_num)
+        else:
+            model = t_models.__dict__[args.arch](num_classes=args.class_num)
     # optionally resume from a checkpoint
     if args.resume:
         if os.path.isfile(args.resume):
@@ -405,33 +416,34 @@ def main_worker(gpu, ngpus_per_node, args):
 
 def train(train_loader, model, criterion, optimizer, epoch, device, args,
           display_hook: Callable):
-    batch_time = AverageMeter('Time', ':6.3f')
-    data_time = AverageMeter('Data', ':6.3f')
+    batch_time = AverageMeter('Time', ':.3f')
     losses = AverageMeter('Loss', ':.4e')
-    top1 = AverageMeter('Acc@1', ':6.2f')
-    top5 = AverageMeter('Acc@5', ':6.2f')
+    top1 = AverageMeter('Acc@1', ':.2f')
+    top5 = AverageMeter('Acc@5', ':.2f')
     progress = ProgressMeter(len(train_loader),
-                             [batch_time, data_time, losses, top1, top5],
-                             prefix="Epoch: [{}]".format(epoch))
+                             [batch_time, losses, top1, top5],
+                             prefix='')
 
     # switch to train mode
     model.train()
 
     end = time.time()
-    for i, (images, target) in enumerate(train_loader):
+    pbar = tqdm(enumerate(train_loader),
+                total=len(train_loader),
+                bar_format='{l_bar}{bar:20}{r_bar}{bar:-20b}',
+                dynamic_ncols=True)
+    for i, (images, target) in pbar:
         # measure data loading time
-        data_time.update(time.time() - end)
 
         # move data to the same device as model
         images: torch.Tensor = images.to(device, non_blocking=True)
         target: torch.Tensor = target.to(device, non_blocking=True)
 
         # compute output
-        output = model(images)
+        output: torch.Tensor = model(images)
         loss = criterion(output, target)
 
         # measure accuracy and record loss
-        # logger(f"output size-{output.size()}, target size-{target.size()}")
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
         losses.update(loss.item(), images.size(0))
         top1.update(acc1[0], images.size(0))
@@ -447,7 +459,12 @@ def train(train_loader, model, criterion, optimizer, epoch, device, args,
         end = time.time()
 
         if i % args.print_freq == 0:
-            progress.display(i + 1)
+            mem = f'{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G'  # (GB)
+            pbar.set_description(
+                ('%11s' * 2 + '%11s') %
+                (f'{epoch}/{args.epochs - args.start_epoch - 1}', mem,
+                 progress))
+            # print(progress)
             display_hook(sys._getframe().f_code.co_name, progress)
 
 
@@ -455,8 +472,12 @@ def validate(val_loader, model, criterion, args, display_hook: Callable):
 
     def run_validate(loader, base_progress=0):
         with torch.no_grad():
-            end = time.time()
-            for i, (images, target) in enumerate(loader):
+            pbar = tqdm(enumerate(loader),
+                        total=len(loader),
+                        bar_format='{l_bar}{bar:20}{r_bar}{bar:-20b}',
+                        dynamic_ncols=True)
+            for i, (images, target) in pbar:
+                pbar.disable
                 i = base_progress + i
                 if args.gpu is not None and torch.cuda.is_available():
                     images = images.cuda(args.gpu, non_blocking=True)
@@ -476,24 +497,24 @@ def validate(val_loader, model, criterion, args, display_hook: Callable):
                 top1.update(acc1[0], images.size(0))
                 top5.update(acc5[0], images.size(0))
 
-                # measure elapsed time
-                batch_time.update(time.time() - end)
-                end = time.time()
+                pred, y = cal_prediction(output, target)
+                confusion_matrix.process_batch(pred, y)
 
                 if i % args.print_freq == 0:
-                    progress.display(i + 1)
+                    pbar.set_description(('%11s') % progress)
                     display_hook(sys._getframe().f_code.co_name, progress)
+            confusion_matrix.print()
+            confusion_matrix.plot(save_dir=args.artifact_path, names=args.class_list)
 
-    batch_time = AverageMeter('Time', ':6.3f', Summary.NONE)
     losses = AverageMeter('Loss', ':.4e', Summary.NONE)
-    top1 = AverageMeter('Acc@1', ':6.2f', Summary.AVERAGE)
-    top5 = AverageMeter('Acc@5', ':6.2f', Summary.AVERAGE)
+    top1 = AverageMeter('Acc@1', ':.2f', Summary.AVERAGE)
+    top5 = AverageMeter('Acc@5', ':.2f', Summary.AVERAGE)
     progress = ProgressMeter(len(val_loader) + (
         args.distributed and
         (len(val_loader.sampler) * args.world_size < len(val_loader.dataset))),
-                             [batch_time, losses, top1, top5],
+                             [losses, top1, top5],
                              prefix='Test: ')
-
+    confusion_matrix = ConfusionMatrix(nc=args.class_num)
     # switch to evaluate mode
     model.eval()
 
@@ -524,7 +545,7 @@ def validate(val_loader, model, criterion, args, display_hook: Callable):
 
 def get_dataset(
         args
-) -> Tuple[torch.utils.data.Dataset, torch.utils.data.Dataset, int]:
+) -> Tuple[torch.utils.data.Dataset, torch.utils.data.Dataset, int, dict]:
     if args.dummy:
         logger("=> Dummy data is used!")
         train_dataset = datasets.FakeData(1281167, (3, 224, 224), 1000,
@@ -575,14 +596,16 @@ def get_dataset(
         #                                         normalize,
         #                                     ]))
     class_num: int = 0
+    class_list:list = []
     try:
         for c in train_dataset.classes:
             class_num += 1
+            class_list.append(str(c))
             logger(f"class:\"{c}\" - id:{train_dataset.class_to_idx[c]}")
         logger(f"total class number: {class_num}")
-    except AttributeError: #'FakeData' object has no attribute 'classes'
+    except AttributeError:  #'FakeData' object has no attribute 'classes'
         pass
-    return (train_dataset, val_dataset, class_num)
+    return (train_dataset, val_dataset, class_num, class_list)
 
 
 def is_parallel(model):
@@ -647,7 +670,7 @@ class AverageMeter(object):
         self.avg = self.sum / self.count
 
     def __str__(self):
-        fmtstr = '{name} {val' + self.fmt + '} ({avg' + self.fmt + '})'
+        fmtstr = '{name} {val' + self.fmt + '}({avg' + self.fmt + '})'
         return fmtstr.format(**self.__dict__)
 
     def summary(self):
@@ -670,18 +693,18 @@ class ProgressMeter(object):
 
     def __init__(self, num_batches: int, meters: list, prefix: str = ""):
         self.batch_fmtstr = self._get_batch_fmtstr(num_batches)
-        self.meters: list = meters
+        self.meters: list[AverageMeter] = meters
         self.prefix: str = prefix
 
-    def display(self, batch):
-        entries = [self.prefix + self.batch_fmtstr.format(batch)]
+    def __str__(self) -> str:
+        entries = [self.prefix]
         entries += [str(meter) for meter in self.meters]
-        logger('\t'.join(entries))
+        return '  '.join(entries)
 
     def display_summary(self):
         entries = [" *"]
         entries += [meter.summary() for meter in self.meters]
-        logger.warning(' '.join(entries))
+        logger.info(' '.join(entries))
 
     def _get_batch_fmtstr(self, num_batches):
         num_digits = len(str(num_batches // 1))
@@ -704,6 +727,15 @@ def accuracy(output: torch.Tensor, target: torch.Tensor, topk: tuple = (1, )):
             correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
+
+
+def cal_prediction(output: torch.Tensor,
+                   target: torch.Tensor) -> Tuple[np.ndarray, np.ndarray]:
+    y_label = target.cpu().view(-1).numpy()
+    with torch.no_grad():
+        _, pred = output.cpu().topk(1, 1, True, True)
+        pred = pred.t().view(-1).numpy()
+        return pred, y_label
 
 
 if __name__ == '__main__':

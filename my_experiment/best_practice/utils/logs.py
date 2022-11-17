@@ -2,9 +2,12 @@
 
 import logging
 import time
+import io
 from os import path as ospath
 from typing import Any
 import warnings
+
+__all__ = ("MyLog", "TqdmToLogger")
 
 
 class _CustomFormatter(logging.Formatter):
@@ -87,6 +90,37 @@ class MyLog():
 
     def critical(self, msg, *args, **kwargs):
         self.my_logger.critical(msg, *args, **kwargs)
+
+
+class TqdmToLogger(io.StringIO):
+    """
+        Output stream for TQDM which will output to logger module instead of
+        the StdOut.
+
+        example:
+
+        from tqdm import tqdm
+        logging.basicConfig(format='%(asctime)s [%(levelname)-8s] %(message)s')
+        logger = logging.getLogger()
+        logger.setLevel(logging.DEBUG)
+
+        tqdm_out = TqdmToLogger(logger)
+        for x in tqdm(range(100),file=tqdm_out,mininterval=30,):
+            time.sleep(.5)
+    """
+    logger = None
+    level = None
+    buf = ''
+
+    def __init__(self, logger: MyLog):
+        super(TqdmToLogger, self).__init__()
+        self.logger = logger
+
+    def write(self, buf):
+        self.buf = buf.strip('\r\n\t ')
+
+    def flush(self):
+        self.logger(self.buf)
 
 
 if __name__ == '__main__':
