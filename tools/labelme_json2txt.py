@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import random
 import warnings
 import cv2
@@ -7,7 +8,6 @@ import numpy as np
 import argparse
 from pathlib import Path
 import shutil
-
 """
 Download labelme with follow command: 
 wget -c https://github.com/wkentaro/labelme/releases/download/v5.0.5/labelme-Linux
@@ -31,6 +31,7 @@ def main():
         '-n'
         '--name-file',
         default='./names.txt',
+        nargs='?',
         dest='name_file',
         metavar="FILE",
         help='input the object name file ',
@@ -72,7 +73,7 @@ def main():
         for d in args.datas:
             d = Path(d).resolve()
             out_dir = str(d.parent / (d.name + "_visualize"))
-            visualize_annotation(d, out_dir)
+            visualize_annotation(d, out_dir, args.name_file)
         print("Visualize Successfully")
 
 
@@ -140,13 +141,23 @@ def json_to_txt(path: str, name_file: str):
                                                         for a in bb]) + '\n')
 
 
-def visualize_annotation(input_folder, output_folder):
+def show_progress(i):
+    i = int(i)
+    print("progress: {}%: ".format(i), "▋" * (i // 2), end="\r")
+    sys.stdout.flush()
+
+
+def visualize_annotation(input_folder, output_folder, name_file):
     print(f"Visualize dir {input_folder}")
     if os.path.exists(output_folder):
         shutil.rmtree(output_folder)
     os.mkdir(output_folder)
+    names = _read_name_file(name_file)
 
-    for file in os.listdir(input_folder):
+    files = os.listdir(input_folder)
+    for index in range(len(files)):
+        show_progress(index * 100 / len(files))
+        file = files[index]
         if file.split(".")[-1] in "txt":
             txt_file = open(os.path.join(input_folder, file), 'r')
             lines = txt_file.readlines()
@@ -170,9 +181,18 @@ def visualize_annotation(input_folder, output_folder):
                 cv2.rectangle(img, (int(x1), int(y1)), (int(x2), int(y2)),
                               (0, 255, 0), 2)
                 cv2.putText(img,
-                            str(int(class_ID)), (int(x1), int(y1)),
+                            f"{str(int(class_ID))}:{names[int(class_ID)]}",
+                            (int(x1), int(y1)),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            1.0, (255, 255, 255),
+                            thickness=3,
+                            lineType=cv2.LINE_AA)
+                cv2.putText(img,
+                            f"{str(int(class_ID))}:{names[int(class_ID)]}",
+                            (int(x1), int(y1)),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             1.0, (255, 0, 255),
+                            thickness=1,
                             lineType=cv2.LINE_AA)
             cv2.imwrite(os.path.join(output_folder, file[:-3] + 'png'), img)
 
